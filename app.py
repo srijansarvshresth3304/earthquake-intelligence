@@ -1,3 +1,5 @@
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestRegressor
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -8,23 +10,30 @@ import pydeck as pdk
 st.set_page_config(page_title="Earthquake Intelligence", layout="wide")
 st.title("🌍 Earthquake Intelligence Dashboard")
 
-# ------------------ LOAD ------------------
 @st.cache_resource
 def load_model():
-    model = joblib.load("models/final_model_no_region.pkl")
-    scaler = joblib.load("models/scaler.pkl")
-    return model, scaler
-
-@st.cache_data(ttl=300)
-def load_data():
-    url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.csv"
+    url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.csv"
     df = pd.read_csv(url)
-    df = df[["time", "latitude", "longitude", "depth", "mag", "nst", "gap", "dmin", "rms"]]
+    df = df[["latitude", "longitude", "depth", "mag", "nst", "gap", "dmin", "rms"]]
     df = df.dropna()
-    return df
-
-model, scaler = load_model()
-df = load_data()
+    df = df[(df["mag"] > 0.5) & (df["mag"] < 9.5)]
+    
+    features = ["latitude", "longitude", "depth", "nst", "gap", "dmin", "rms"]
+    X = df[features]
+    y = df["mag"]
+    
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    
+    model = RandomForestRegressor(
+        n_estimators=100,
+        max_depth=6,
+        min_samples_split=5,
+        min_samples_leaf=4,
+        random_state=42
+    )
+    model.fit(X_scaled, y)
+    return model, scaler
 
 # ------------------ PROCESS ------------------
 features = ["latitude", "longitude", "depth", "nst", "gap", "dmin", "rms"]
