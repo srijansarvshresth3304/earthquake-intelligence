@@ -3,7 +3,6 @@ from sklearn.ensemble import RandomForestRegressor
 import streamlit as st
 import pandas as pd
 import numpy as np
-import joblib
 import pydeck as pdk
 
 # ------------------ CONFIG ------------------
@@ -17,14 +16,11 @@ def load_model():
     df = df[["latitude", "longitude", "depth", "mag", "nst", "gap", "dmin", "rms"]]
     df = df.dropna()
     df = df[(df["mag"] > 0.5) & (df["mag"] < 9.5)]
-    
     features = ["latitude", "longitude", "depth", "nst", "gap", "dmin", "rms"]
     X = df[features]
     y = df["mag"]
-    
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
-    
     model = RandomForestRegressor(
         n_estimators=100,
         max_depth=6,
@@ -35,6 +31,17 @@ def load_model():
     model.fit(X_scaled, y)
     return model, scaler
 
+@st.cache_data(ttl=300)
+def load_data():
+    url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.csv"
+    df = pd.read_csv(url)
+    df = df[["time", "latitude", "longitude", "depth", "mag", "nst", "gap", "dmin", "rms"]]
+    df = df.dropna()
+    return df
+
+model, scaler = load_model()
+df = load_data()
+
 # ------------------ PROCESS ------------------
 features = ["latitude", "longitude", "depth", "nst", "gap", "dmin", "rms"]
 
@@ -44,7 +51,8 @@ df["Predicted_Mag"] = np.mean(all_preds, axis=0)
 df["Uncertainty"] = np.std(all_preds, axis=0)
 
 df_final = df.copy()
-
+df_final["Predicted_Mag"] = df_final["Predicted_Mag"].round(2)
+df_final["Uncertainty"] = df_final["Uncertainty"].round(2)
 
 # ------------------ ZONE ------------------
 def get_zone(mag):
@@ -94,29 +102,17 @@ else:
 
 # ------------------ METRICS ------------------
 col1, col2, col3 = st.columns(3)
-
 col1.metric("Total Events", len(df_final))
 col2.metric("Max Magnitude", round(max_mag, 2))
 col3.metric("Avg Magnitude", round(df_final["Predicted_Mag"].mean(), 2))
 
 # ------------------ TOP 5 EVENTS ------------------
 st.subheader("🔥 Top 5 Dangerous Events")
-
 top5 = df_final.sort_values("Predicted_Mag", ascending=False).head(5)
-
-st.dataframe(top5[[
-    "time",
-    "latitude",
-    "longitude",
-    "mag",
-    "Predicted_Mag",
-    "Uncertainty",
-    "Zone"
-]], use_container_width=True)
+st.dataframe(top5[["time", "latitude", "longitude", "mag", "Predicted_Mag", "Uncertainty", "Zone"]], use_container_width=True)
 
 # ------------------ MAP ------------------
 st.subheader("📍 Live Earthquake Map")
-
 tooltip = {
     "html": """
     <b>Time:</b> {time} <br/>
@@ -127,58 +123,25 @@ tooltip = {
     """,
     "style": {"backgroundColor": "black", "color": "white"}
 }
-
-layer = pdk.Layer(
-    "ScatterplotLayer",
-    data=df_final,
-    get_position='[longitude, latitude]',
-    get_color='color',
-    get_radius='radius',
-    pickable=True,
-    auto_highlight=True,
-)
-
-view_state = pdk.ViewState(
-    latitude=20,
-    longitude=0,
-    zoom=1.5,
-)
-
-st.pydeck_chart(
-    pdk.Deck(
-        layers=[layer],
-        initial_view_state=view_state,
-        tooltip=tooltip
-    )
-)
+layer = pdk.Layer("ScatterplotLayer", data=df_final, get_position='[longitude, latitude]', get_color='color', get_radius='radius', pickable=True, auto_highlight=True)
+view_state = pdk.ViewState(latitude=20, longitude=0, zoom=1.5)
+st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=view_state, tooltip=tooltip))
 
 # ------------------ FULL DATA ------------------
 st.subheader("📊 Full Dataset")
-
-st.dataframe(df_final[[
-    "time",
-    "latitude",
-    "longitude",
-    "mag",
-    "Predicted_Mag",
-    "Uncertainty",
-    "Zone"
-]], use_container_width=True)
+st.dataframe(df_final[["time", "latitude", "longitude", "mag", "Predicted_Mag", "Uncertainty", "Zone"]], use_container_width=True)
 
 # ------------------ PREDICTION TOOL ------------------
 st.subheader("🔮 What-If Earthquake Predictor")
 st.caption("Enter seismic parameters to estimate magnitude")
 
 col1, col2, col3 = st.columns(3)
-
 with col1:
     lat = st.number_input("Latitude", min_value=-90.0, max_value=90.0, value=35.0)
     nst = st.number_input("NST (No. of Stations)", min_value=0, max_value=200, value=20)
-
 with col2:
     lon = st.number_input("Longitude", min_value=-180.0, max_value=180.0, value=140.0)
     gap = st.number_input("Gap (degrees)", min_value=0.0, max_value=360.0, value=80.0)
-
 with col3:
     depth = st.number_input("Depth (km)", min_value=0.0, max_value=700.0, value=10.0)
     dmin = st.number_input("Dmin (distance)", min_value=0.0, max_value=10.0, value=0.5)
@@ -192,7 +155,6 @@ if st.button("Predict Magnitude"):
     pred_mag = round(float(np.mean(tree_preds)), 2)
     pred_unc = round(float(np.std(tree_preds)), 2)
     pred_zone = get_zone(pred_mag)
-
     st.success(f"Predicted Magnitude: **{pred_mag}** ± {pred_unc}")
     st.info(f"Zone: **{pred_zone}**")
     if pred_unc > 0.8:
